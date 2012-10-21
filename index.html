@@ -1,0 +1,242 @@
+<!doctype html>
+<html>
+  <head>
+    <title>WebGL Fish Eye Lens</title>
+    <style type="text/css">
+        body {
+            margin-left: 5%;
+            width: 80%;
+        }
+    </style>
+
+    <script type="text/javascript" src="webgl.js"></script> 
+
+    <script id="vshader" type="x-shader/x-vertex"> 
+        attribute vec4 apos;
+        attribute vec2 atexcoord;
+
+        varying highp vec2 vtexcoord;
+
+        void main()
+        {
+            gl_Position = apos;
+            vtexcoord = atexcoord;
+        } 
+    </script>
+
+    <script id="fshader" type="x-shader/x-fragment"> 
+        varying highp vec2 vtexcoord;
+        uniform sampler2D sampler;
+
+        void main()
+        {
+            gl_FragColor = texture2D(sampler, vec2(vtexcoord.s, vtexcoord.t));
+        } 
+    </script>
+
+    <script type="text/javascript">
+
+        var canv;
+        var buffer;
+        var lens;
+        var prog;
+        var texture_id;
+    
+        var zoom = false;
+        var current_puzzle = 1;
+        var results = [];
+        var renderTimer;
+        var startTime;
+
+        var lens_x;
+        var lens_y;
+
+        function initTextures(url)
+        {  
+            var id = gl.createTexture();  
+            var image = new Image();  
+            image.onload = function() {
+                gl.bindTexture(gl.TEXTURE_2D, id);  
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);  
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);  
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);  
+                gl.generateMipmap(gl.TEXTURE_2D);  
+                gl.bindTexture(gl.TEXTURE_2D, null);  
+            }
+ 
+            image.src = url;  
+
+            return id;
+        }  
+
+        function init()
+        {
+            canv = document.getElementById('canv');
+
+            gl = canv.getContext("experimental-webgl");
+            gl.viewportWidth = canv.width;
+            gl.viewportHeight = canv.height;
+
+            buffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+
+            var vertices = [
+                  1.0,  1.0, 0.0,
+                  0.0,  0.0,
+                 -1.0,  1.0, 0.0,
+                  -1.0,  0.0,
+                  1.0, -1.0, 0.0,
+                  0.0,  1.0,
+                 -1.0, -1.0, 0.0,
+                  -1.0,  1.0
+            ];
+
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+            buffer.itemSize = 5;
+            buffer.numItems = 4;
+
+            var vshader = program.compileFromElement(document.getElementById('vshader'), gl.VERTEX_SHADER);
+            var fshader = program.compileFromElement(document.getElementById('fshader'), gl.FRAGMENT_SHADER);
+
+            prog = program.link(vshader, fshader);
+
+            texture_id = initTextures('lena.png');
+
+            canv.addEventListener("click", onClick, false);
+            canv.addEventListener("mousemove", onMouseMove, false);
+
+            startTime = new Date();
+            renderTimer = setInterval(render, 200);
+        }
+
+        function renderLens(x, y, innerRadius, outerRadius)
+        {
+            lens = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, lens);
+
+            var halfInnerRadius = 0.5*innerRadius;
+
+            vertices = []
+            for (var i = 0; i < 61; ++i) {
+                var angle = (i-30)/30*Math.PI;
+                var cos_angle = Math.cos(angle);
+                var sin_angle = Math.sin(angle);
+                vertices.push(lens_x + innerRadius*cos_angle);
+                vertices.push(lens_y + innerRadius*sin_angle);
+                vertices.push(0.0);
+
+                var s = 0.5;
+                var t = 0.5;
+
+                s = -(0.5 - 0.5*(lens_x + halfInnerRadius*cos_angle));
+                t = -(0.5 + 0.5*(lens_y + halfInnerRadius*sin_angle));
+                vertices.push(s);
+                vertices.push(t);
+
+                vertices.push(lens_x + outerRadius*cos_angle);
+                vertices.push(lens_y + outerRadius*sin_angle);
+                vertices.push(0.0);
+
+                s = -(0.5 - 0.5*(lens_x + outerRadius*cos_angle));
+                t = -(0.5 + 0.5*(lens_y + outerRadius*sin_angle));
+
+                vertices.push(s);
+                vertices.push(t);
+            }
+
+            var ringSize = vertices.length / 5;
+
+            for (var i = 0; i < 60; ++i) {
+                var angle = (i-30)/30*Math.PI;
+                var cos_angle = Math.cos(angle);
+                var sin_angle = Math.sin(angle);
+                vertices.push(lens_x + innerRadius*cos_angle);
+                vertices.push(lens_y + innerRadius*sin_angle);
+                vertices.push(0.0);
+
+                s = -(0.5 - 0.5*(lens_x + halfInnerRadius*cos_angle));
+                t = -(0.5 + 0.5*(lens_y + halfInnerRadius*sin_angle));
+
+                vertices.push(s);
+                vertices.push(t);
+            }
+
+            var centerSize = (vertices.length / 5) - ringSize;
+
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+
+            var attr = gl.getAttribLocation(prog, 'apos');
+            gl.enableVertexAttribArray(attr);
+            gl.vertexAttribPointer(attr, 3, gl.FLOAT, false, 20, 0);
+
+            var attr = gl.getAttribLocation(prog, 'atexcoord');
+            gl.enableVertexAttribArray(attr);
+            gl.vertexAttribPointer(attr, 2, gl.FLOAT, false, 20, 12);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, texture_id);
+            gl.uniform1i(gl.getUniformLocation(prog, 'sampler'), 0);
+
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, ringSize);
+            gl.drawArrays(gl.TRIANGLE_FAN, ringSize, centerSize);
+
+        }
+
+        function render()
+        { 
+            gl.clearColor(0.0, 0.0, 0.0, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); 
+
+            gl.useProgram(prog);
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+
+            var attr = gl.getAttribLocation(prog, 'apos');
+            gl.enableVertexAttribArray(attr);
+            gl.vertexAttribPointer(attr, 3, gl.FLOAT, false, 20, 0);
+
+            var attr = gl.getAttribLocation(prog, 'atexcoord');
+            gl.enableVertexAttribArray(attr);
+            gl.vertexAttribPointer(attr, 2, gl.FLOAT, false, 20, 12);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, texture_id);
+            gl.uniform1i(gl.getUniformLocation(prog, 'sampler'), 0);
+
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, buffer.numItems);
+
+            if (zoom) {
+              renderLens(lens_x, lens_y, 0.3, 0.0);
+            } else {
+              renderLens(lens_x, lens_y, 0.3, 0.4);
+            }
+        }
+
+        function onClick(ev)
+        {
+        }
+
+        function onMouseMove(ev)
+        {
+            lens_x = (ev.pageX - canv.offsetLeft - 256)/256;
+            lens_y = (ev.pageY - canv.offsetTop - 256)/-256;
+        }
+
+    </script>
+  </head>
+  <body onload="init()">
+    <h1> Fish Eye Lens </h1>
+    This is an example of using webgl to create a fish eye lens for an image.
+    The "fish-eye" lens distorts the image, but does not hide any of the image.
+
+    A normal zoom shows more of the zoomed area, but hides portions of the image
+    behind the zoomed area. 
+    <hr/>
+    <div id="radios">
+    <input type="radio" name="zoom" value="distort" checked onClick="zoom=false">Fish Eye Zoom</input>
+    <input type="radio" name="zoom" value="zoom" onClick="zoom=true">Simple Zoom</input>
+    </div>
+    <br/>
+    <canvas id="canv" width="512" height="512"></canvas> 
+  </body>
+</html>
+
